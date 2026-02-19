@@ -63,7 +63,6 @@ enum HostEnvSecurityPolicy {
     ]
 
     static let blockedOverrideKeys: Set<String> = [
-        "ALL_PROXY",
         "AWS_CONFIG_FILE",
         "AWS_SHARED_CREDENTIALS_FILE",
         "AWS_WEB_IDENTITY_TOKEN_FILE",
@@ -120,8 +119,6 @@ enum HostEnvSecurityPolicy {
         "HGRCPATH",
         "HISTFILE",
         "HOME",
-        "HTTP_PROXY",
-        "HTTPS_PROXY",
         "KUBECONFIG",
         "LESSCLOSE",
         "LESSOPEN",
