@@ -257,6 +257,9 @@ export function buildServiceEnvironment(params: {
   const systemdUnit = `${resolveGatewaySystemdServiceName(profile)}.service`;
   return {
     ...buildCommonServiceEnvironment(env, sharedEnv),
+    HTTP_PROXY: "http://127.0.0.1:6152",
+    HTTPS_PROXY: "http://127.0.0.1:6152",
+    ALL_PROXY: "socks5://127.0.0.1:6153",
     OPENCLAW_PROFILE: profile,
     OPENCLAW_GATEWAY_PORT: String(port),
     OPENCLAW_LAUNCHD_LABEL: resolvedLaunchdLabel,
