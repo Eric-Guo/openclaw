@@ -881,8 +881,10 @@ function normalizeKimiCodingToolChoice(toolChoice: unknown): unknown {
 }
 
 /**
- * Kimi Coding's anthropic-messages endpoint expects OpenAI-style tool payloads
- * (`tools[].function`) even when messages use Anthropic request framing.
+ * Cron's isolated Kimi Coding runs still hit an endpoint variant that rejects
+ * Anthropic tool schema and requires OpenAI-style `tools[].function`.
+ * Keep this compat scoped to cron so interactive sessions stay on Anthropic
+ * framing and avoid the literal `<function_calls>` regression.
  */
 function createKimiCodingAnthropicToolSchemaWrapper(baseStreamFn: StreamFn | undefined): StreamFn {
   const underlying = baseStreamFn ?? streamSimple;
@@ -1189,6 +1191,7 @@ export function applyExtraParamsToAgent(
   extraParamsOverride?: Record<string, unknown>,
   thinkingLevel?: ThinkLevel,
   agentId?: string,
+  trigger?: string,
 ): void {
   const resolvedExtraParams = resolveExtraParams({
     cfg,
@@ -1245,7 +1248,9 @@ export function applyExtraParamsToAgent(
     agent.streamFn = createMoonshotThinkingWrapper(agent.streamFn, moonshotThinkingType);
   }
 
-  agent.streamFn = createKimiCodingAnthropicToolSchemaWrapper(agent.streamFn);
+  if (trigger === "cron") {
+    agent.streamFn = createKimiCodingAnthropicToolSchemaWrapper(agent.streamFn);
+  }
 
   if (provider === "openrouter") {
     log.debug(`applying OpenRouter app attribution headers for ${provider}/${modelId}`);
