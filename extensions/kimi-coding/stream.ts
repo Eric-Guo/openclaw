@@ -19,7 +19,71 @@ function stripTaggedToolCallCounter(value: string): string {
   return value.trim().replace(/:\d+$/, "");
 }
 
-function parseKimiTaggedToolCallSection(sectionText: string): KimiToolCallBlock[] | null {
+function resolveCaseInsensitiveAllowedToolName(
+  rawName: string,
+  allowedToolNames?: Set<string>,
+): string | null {
+  if (!allowedToolNames || allowedToolNames.size === 0) {
+    return null;
+  }
+  const folded = rawName.trim().toLowerCase();
+  let match: string | null = null;
+  for (const allowedName of allowedToolNames) {
+    if (allowedName.toLowerCase() !== folded) {
+      continue;
+    }
+    if (match && match !== allowedName) {
+      return null;
+    }
+    match = allowedName;
+  }
+  return match;
+}
+
+function normalizeToolNameCandidate(value: string): string {
+  return value.trim().replace(/\//g, ".");
+}
+
+function resolveTaggedToolCallName(rawName: string, allowedToolNames?: Set<string>): string {
+  const trimmed = rawName.trim();
+  if (!trimmed || !allowedToolNames || allowedToolNames.size === 0) {
+    return trimmed;
+  }
+  if (allowedToolNames.has(trimmed)) {
+    return trimmed;
+  }
+
+  const normalizedDelimiter = normalizeToolNameCandidate(trimmed);
+  if (allowedToolNames.has(normalizedDelimiter)) {
+    return normalizedDelimiter;
+  }
+
+  const segments = normalizedDelimiter
+    .split(".")
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+  for (let index = 1; index < segments.length; index += 1) {
+    const suffix = segments.slice(index).join(".");
+    if (allowedToolNames.has(suffix)) {
+      return suffix;
+    }
+    const caseInsensitiveSuffix = resolveCaseInsensitiveAllowedToolName(suffix, allowedToolNames);
+    if (caseInsensitiveSuffix) {
+      return caseInsensitiveSuffix;
+    }
+  }
+
+  return (
+    resolveCaseInsensitiveAllowedToolName(trimmed, allowedToolNames) ??
+    resolveCaseInsensitiveAllowedToolName(normalizedDelimiter, allowedToolNames) ??
+    trimmed
+  );
+}
+
+function parseKimiTaggedToolCallSection(
+  sectionText: string,
+  allowedToolNames?: Set<string>,
+): KimiToolCallBlock[] | null {
   const trimmed = sectionText.trim();
   if (!trimmed.startsWith(TOOL_CALLS_SECTION_BEGIN) || !trimmed.endsWith(TOOL_CALLS_SECTION_END)) {
     return null;
@@ -68,7 +132,7 @@ function parseKimiTaggedToolCallSection(sectionText: string): KimiToolCallBlock[
       return null;
     }
 
-    const name = stripTaggedToolCallCounter(rawId);
+    const name = resolveTaggedToolCallName(stripTaggedToolCallCounter(rawId), allowedToolNames);
     if (!name) {
       return null;
     }
@@ -108,7 +172,10 @@ function pushTextBlock(blocks: KimiRewrittenTextBlock[], text: string): void {
   });
 }
 
-function parseKimiTaggedContentBlocks(text: string): KimiRewrittenTextBlock[] | null {
+function parseKimiTaggedContentBlocks(
+  text: string,
+  allowedToolNames?: Set<string>,
+): KimiRewrittenTextBlock[] | null {
   const sectionStart = text.indexOf(TOOL_CALLS_SECTION_BEGIN);
   if (sectionStart < 0) {
     return null;
@@ -136,7 +203,7 @@ function parseKimiTaggedContentBlocks(text: string): KimiRewrittenTextBlock[] | 
       nextSectionStart,
       nextSectionEnd + TOOL_CALLS_SECTION_END.length,
     );
-    const parsedSection = parseKimiTaggedToolCallSection(sectionText);
+    const parsedSection = parseKimiTaggedToolCallSection(sectionText, allowedToolNames);
     if (!parsedSection) {
       return null;
     }
@@ -200,7 +267,10 @@ function extractBalancedJsonSlice(text: string, startIndex: number): BalancedJso
 
 const INLINE_TOOL_CALL_RE = /((?:functions?|tools?)(?:[./_-][a-zA-Z0-9_-]+)+:\d+)\s+/g;
 
-function parseKimiInlineToolCalls(text: string): KimiRewrittenTextBlock[] | null {
+function parseKimiInlineToolCalls(
+  text: string,
+  allowedToolNames?: Set<string>,
+): KimiRewrittenTextBlock[] | null {
   const blocks: KimiRewrittenTextBlock[] = [];
   let cursor = 0;
   let changed = false;
@@ -248,7 +318,7 @@ function parseKimiInlineToolCalls(text: string): KimiRewrittenTextBlock[] | null
     blocks.push({
       type: "toolCall",
       id: rawId,
-      name: stripTaggedToolCallCounter(rawId),
+      name: resolveTaggedToolCallName(stripTaggedToolCallCounter(rawId), allowedToolNames),
       arguments: argumentsObject as Record<string, unknown>,
     });
     changed = true;
@@ -258,7 +328,10 @@ function parseKimiInlineToolCalls(text: string): KimiRewrittenTextBlock[] | null
   return changed ? blocks : null;
 }
 
-function rewriteKimiTaggedToolCallsInMessage(message: unknown): void {
+function rewriteKimiTaggedToolCallsInMessage(
+  message: unknown,
+  allowedToolNames?: Set<string>,
+): void {
   if (!message || typeof message !== "object") {
     return;
   }
@@ -281,7 +354,7 @@ function rewriteKimiTaggedToolCallsInMessage(message: unknown): void {
       continue;
     }
 
-    const taggedBlocks = parseKimiTaggedContentBlocks(typedBlock.text);
+    const taggedBlocks = parseKimiTaggedContentBlocks(typedBlock.text, allowedToolNames);
     const candidateBlocks = taggedBlocks ?? [{ type: "text", text: typedBlock.text }];
     const parsed: KimiRewrittenTextBlock[] = [];
     let blockChanged = taggedBlocks !== null;
@@ -291,7 +364,7 @@ function rewriteKimiTaggedToolCallsInMessage(message: unknown): void {
         parsed.push(candidate);
         continue;
       }
-      const inlineBlocks = parseKimiInlineToolCalls(candidate.text);
+      const inlineBlocks = parseKimiInlineToolCalls(candidate.text, allowedToolNames);
       if (!inlineBlocks) {
         parsed.push(candidate);
         continue;
@@ -322,11 +395,12 @@ function rewriteKimiTaggedToolCallsInMessage(message: unknown): void {
 
 function wrapKimiTaggedToolCalls(
   stream: ReturnType<typeof streamSimple>,
+  allowedToolNames?: Set<string>,
 ): ReturnType<typeof streamSimple> {
   const originalResult = stream.result.bind(stream);
   stream.result = async () => {
     const message = await originalResult();
-    rewriteKimiTaggedToolCallsInMessage(message);
+    rewriteKimiTaggedToolCallsInMessage(message, allowedToolNames);
     return message;
   };
 
@@ -342,8 +416,8 @@ function wrapKimiTaggedToolCalls(
               partial?: unknown;
               message?: unknown;
             };
-            rewriteKimiTaggedToolCallsInMessage(event.partial);
-            rewriteKimiTaggedToolCallsInMessage(event.message);
+            rewriteKimiTaggedToolCallsInMessage(event.partial, allowedToolNames);
+            rewriteKimiTaggedToolCallsInMessage(event.message, allowedToolNames);
           }
           return result;
         },
@@ -362,11 +436,22 @@ function wrapKimiTaggedToolCalls(
 export function createKimiToolCallMarkupWrapper(baseStreamFn: StreamFn | undefined): StreamFn {
   const underlying = baseStreamFn ?? streamSimple;
   return (model, context, options) => {
+    const allowedToolNames = new Set(
+      Array.isArray(context?.tools)
+        ? context.tools
+            .map((tool) =>
+              tool && typeof tool === "object" ? (tool as { name?: unknown }).name : undefined,
+            )
+            .filter((name): name is string => typeof name === "string" && name.trim().length > 0)
+        : [],
+    );
     const maybeStream = underlying(model, context, options);
     if (maybeStream && typeof maybeStream === "object" && "then" in maybeStream) {
-      return Promise.resolve(maybeStream).then((stream) => wrapKimiTaggedToolCalls(stream));
+      return Promise.resolve(maybeStream).then((stream) =>
+        wrapKimiTaggedToolCalls(stream, allowedToolNames),
+      );
     }
-    return wrapKimiTaggedToolCalls(maybeStream);
+    return wrapKimiTaggedToolCalls(maybeStream, allowedToolNames);
   };
 }
 

@@ -1,5 +1,5 @@
 import type { StreamFn } from "@mariozechner/pi-agent-core";
-import type { Context, Model } from "@mariozechner/pi-ai";
+import { Type, type Context, type Model } from "@mariozechner/pi-ai";
 import { describe, expect, it } from "vitest";
 import { createKimiToolCallMarkupWrapper, wrapKimiProviderStream } from "./stream.js";
 
@@ -7,6 +7,35 @@ type FakeStream = {
   result: () => Promise<unknown>;
   [Symbol.asyncIterator]: () => AsyncIterator<unknown>;
 };
+
+const TEST_TOOLS = [
+  {
+    name: "read",
+    description: "Read a file",
+    parameters: Type.Object({ file_path: Type.String() }),
+  },
+  {
+    name: "write",
+    description: "Write a file",
+    parameters: Type.Object({
+      file_path: Type.String(),
+      content: Type.String(),
+    }),
+  },
+  {
+    name: "exec",
+    description: "Execute a command",
+    parameters: Type.Object({ command: Type.String() }),
+  },
+  {
+    name: "browser",
+    description: "Control browser",
+    parameters: Type.Object({
+      action: Type.String(),
+      url: Type.Optional(Type.String()),
+    }),
+  },
+] satisfies Context["tools"];
 
 function createFakeStream(params: { events: unknown[]; resultMessage: unknown }): FakeStream {
   return {
@@ -71,7 +100,7 @@ describe("kimi tool-call markup wrapper", () => {
     const wrapped = createKimiToolCallMarkupWrapper(baseStreamFn);
     const stream = wrapped(
       { api: "anthropic-messages", provider: "kimi", id: "k2p5" } as Model<"anthropic-messages">,
-      { messages: [] } as Context,
+      { messages: [], tools: TEST_TOOLS } as Context,
       {},
     ) as FakeStream;
 
@@ -93,7 +122,7 @@ describe("kimi tool-call markup wrapper", () => {
             {
               type: "toolCall",
               id: "functions.read:0",
-              name: "functions.read",
+              name: "read",
               arguments: { file_path: "./package.json" },
             },
           ],
@@ -105,7 +134,7 @@ describe("kimi tool-call markup wrapper", () => {
             {
               type: "toolCall",
               id: "functions.read:0",
-              name: "functions.read",
+              name: "read",
               arguments: { file_path: "./package.json" },
             },
           ],
@@ -120,7 +149,7 @@ describe("kimi tool-call markup wrapper", () => {
         {
           type: "toolCall",
           id: "functions.read:0",
-          name: "functions.read",
+          name: "read",
           arguments: { file_path: "./package.json" },
         },
       ],
@@ -143,7 +172,7 @@ describe("kimi tool-call markup wrapper", () => {
     const wrapped = createKimiToolCallMarkupWrapper(baseStreamFn);
     const stream = wrapped(
       { api: "anthropic-messages", provider: "kimi", id: "k2p5" } as Model<"anthropic-messages">,
-      { messages: [] } as Context,
+      { messages: [], tools: TEST_TOOLS } as Context,
       {},
     ) as FakeStream;
 
@@ -165,7 +194,7 @@ describe("kimi tool-call markup wrapper", () => {
     const wrapped = createKimiToolCallMarkupWrapper(baseStreamFn);
     const stream = (await wrapped(
       { api: "anthropic-messages", provider: "kimi", id: "k2p5" } as Model<"anthropic-messages">,
-      { messages: [] } as Context,
+      { messages: [], tools: TEST_TOOLS } as Context,
       {},
     )) as FakeStream;
 
@@ -175,7 +204,7 @@ describe("kimi tool-call markup wrapper", () => {
         {
           type: "toolCall",
           id: "functions.read:0",
-          name: "functions.read",
+          name: "read",
           arguments: { file_path: "./package.json" },
         },
       ],
@@ -198,7 +227,7 @@ describe("kimi tool-call markup wrapper", () => {
     const wrapped = createKimiToolCallMarkupWrapper(baseStreamFn);
     const stream = wrapped(
       { api: "anthropic-messages", provider: "kimi", id: "k2p5" } as Model<"anthropic-messages">,
-      { messages: [] } as Context,
+      { messages: [], tools: TEST_TOOLS } as Context,
       {},
     ) as FakeStream;
 
@@ -208,13 +237,13 @@ describe("kimi tool-call markup wrapper", () => {
         {
           type: "toolCall",
           id: "functions.read:0",
-          name: "functions.read",
+          name: "read",
           arguments: { file_path: "./package.json" },
         },
         {
           type: "toolCall",
           id: "functions.write:1",
-          name: "functions.write",
+          name: "write",
           arguments: { file_path: "./out.txt", content: "done" },
         },
       ],
@@ -237,7 +266,7 @@ describe("kimi tool-call markup wrapper", () => {
     const wrapped = createKimiToolCallMarkupWrapper(baseStreamFn);
     const stream = wrapped(
       { api: "anthropic-messages", provider: "kimi", id: "k2p5" } as Model<"anthropic-messages">,
-      { messages: [] } as Context,
+      { messages: [], tools: TEST_TOOLS } as Context,
       {},
     ) as FakeStream;
 
@@ -248,7 +277,7 @@ describe("kimi tool-call markup wrapper", () => {
         {
           type: "toolCall",
           id: "functions.browser:0",
-          name: "functions.browser",
+          name: "browser",
           arguments: {
             action: "browse",
             url: "https://zhuanlan.zhihu.com/p/2022015752258027715",
@@ -274,7 +303,7 @@ describe("kimi tool-call markup wrapper", () => {
     const wrapped = createKimiToolCallMarkupWrapper(baseStreamFn);
     const stream = wrapped(
       { api: "anthropic-messages", provider: "kimi", id: "k2p5" } as Model<"anthropic-messages">,
-      { messages: [] } as Context,
+      { messages: [], tools: TEST_TOOLS } as Context,
       {},
     ) as FakeStream;
 
@@ -284,31 +313,31 @@ describe("kimi tool-call markup wrapper", () => {
         {
           type: "toolCall",
           id: "functions.read:0",
-          name: "functions.read",
+          name: "read",
           arguments: { file_path: "/Users/guoshuyi/.openclaw/workspace/SOUL.md" },
         },
         {
           type: "toolCall",
           id: "functions.read:1",
-          name: "functions.read",
+          name: "read",
           arguments: { file_path: "/Users/guoshuyi/.openclaw/workspace/USER.md" },
         },
         {
           type: "toolCall",
           id: "functions.read:2",
-          name: "functions.read",
+          name: "read",
           arguments: { file_path: "/Users/guoshuyi/.openclaw/workspace/MEMORY.md" },
         },
         {
           type: "toolCall",
           id: "functions.read:3",
-          name: "functions.read",
+          name: "read",
           arguments: { file_path: "/Users/guoshuyi/.openclaw/workspace/memory/2026-04-08.md" },
         },
         {
           type: "toolCall",
           id: "functions.read:4",
-          name: "functions.read",
+          name: "read",
           arguments: { file_path: "/Users/guoshuyi/.openclaw/workspace/memory/2026-04-07.md" },
         },
         {
@@ -335,7 +364,7 @@ describe("kimi tool-call markup wrapper", () => {
     const wrapped = createKimiToolCallMarkupWrapper(baseStreamFn);
     const stream = wrapped(
       { api: "anthropic-messages", provider: "kimi", id: "k2p5" } as Model<"anthropic-messages">,
-      { messages: [] } as Context,
+      { messages: [], tools: TEST_TOOLS } as Context,
       {},
     ) as FakeStream;
 
@@ -345,25 +374,25 @@ describe("kimi tool-call markup wrapper", () => {
         {
           type: "toolCall",
           id: "functions.read:0",
-          name: "functions.read",
+          name: "read",
           arguments: { file_path: "/Users/guoshuyi/.openclaw/workspace/SOUL.md" },
         },
         {
           type: "toolCall",
           id: "functions.read:1",
-          name: "functions.read",
+          name: "read",
           arguments: { file_path: "/Users/guoshuyi/.openclaw/workspace/USER.md" },
         },
         {
           type: "toolCall",
           id: "functions.exec:5",
-          name: "functions.exec",
+          name: "exec",
           arguments: { command: "cat /Users/guoshuyi/.openclaw/workspace/SOUL.md" },
         },
         {
           type: "toolCall",
           id: "functions.exec:6",
-          name: "functions.exec",
+          name: "exec",
           arguments: {
             command:
               'cat /Users/guoshuyi/.openclaw/workspace/memory/2026-04-08.md 2>/dev/null || echo "File not found"',
@@ -395,7 +424,7 @@ describe("kimi tool-call markup wrapper", () => {
     } as never);
     const stream = wrapped(
       { api: "anthropic-messages", provider: "kimi", id: "k2p5" } as Model<"anthropic-messages">,
-      { messages: [] } as Context,
+      { messages: [], tools: TEST_TOOLS } as Context,
       {},
     ) as FakeStream;
 
@@ -405,7 +434,7 @@ describe("kimi tool-call markup wrapper", () => {
         {
           type: "toolCall",
           id: "functions.read:0",
-          name: "functions.read",
+          name: "read",
           arguments: { file_path: "./package.json" },
         },
       ],
