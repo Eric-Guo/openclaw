@@ -19,9 +19,8 @@ function stripTaggedToolCallCounter(value: string): string {
   return value.trim().replace(/:\d+$/, "");
 }
 
-function parseKimiTaggedToolCalls(text: string): KimiToolCallBlock[] | null {
-  const trimmed = text.trim();
-  // Kimi emits tagged tool-call sections as standalone text blocks on this path.
+function parseKimiTaggedToolCallSection(sectionText: string): KimiToolCallBlock[] | null {
+  const trimmed = sectionText.trim();
   if (!trimmed.startsWith(TOOL_CALLS_SECTION_BEGIN) || !trimmed.endsWith(TOOL_CALLS_SECTION_END)) {
     return null;
   }
@@ -87,6 +86,64 @@ function parseKimiTaggedToolCalls(text: string): KimiToolCallBlock[] | null {
   return toolCalls.length > 0 ? toolCalls : null;
 }
 
+type KimiRewrittenTextBlock =
+  | KimiToolCallBlock
+  | {
+      type: "text";
+      text: string;
+    };
+
+function pushTextBlock(blocks: KimiRewrittenTextBlock[], text: string): void {
+  if (!text.trim()) {
+    return;
+  }
+  blocks.push({
+    type: "text",
+    text,
+  });
+}
+
+function parseKimiTaggedContentBlocks(text: string): KimiRewrittenTextBlock[] | null {
+  const sectionStart = text.indexOf(TOOL_CALLS_SECTION_BEGIN);
+  if (sectionStart < 0) {
+    return null;
+  }
+
+  const blocks: KimiRewrittenTextBlock[] = [];
+  let cursor = 0;
+  let foundSection = false;
+
+  while (cursor < text.length) {
+    const nextSectionStart = text.indexOf(TOOL_CALLS_SECTION_BEGIN, cursor);
+    if (nextSectionStart < 0) {
+      pushTextBlock(blocks, text.slice(cursor));
+      break;
+    }
+
+    pushTextBlock(blocks, text.slice(cursor, nextSectionStart));
+
+    const nextSectionEnd = text.indexOf(TOOL_CALLS_SECTION_END, nextSectionStart);
+    if (nextSectionEnd < 0) {
+      return null;
+    }
+
+    const sectionText = text.slice(
+      nextSectionStart,
+      nextSectionEnd + TOOL_CALLS_SECTION_END.length,
+    );
+    const parsedSection = parseKimiTaggedToolCallSection(sectionText);
+    if (!parsedSection) {
+      return null;
+    }
+
+    blocks.push(...parsedSection);
+    foundSection = true;
+    cursor = nextSectionEnd + TOOL_CALLS_SECTION_END.length;
+  }
+
+  return foundSection ? blocks : null;
+}
+
 function rewriteKimiTaggedToolCallsInMessage(message: unknown): void {
   if (!message || typeof message !== "object") {
     return;
@@ -110,7 +167,7 @@ function rewriteKimiTaggedToolCallsInMessage(message: unknown): void {
       continue;
     }
 
-    const parsed = parseKimiTaggedToolCalls(typedBlock.text);
+    const parsed = parseKimiTaggedContentBlocks(typedBlock.text);
     if (!parsed) {
       nextContent.push(block);
       continue;

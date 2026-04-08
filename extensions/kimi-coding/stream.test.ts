@@ -27,6 +27,8 @@ const KIMI_TOOL_TEXT =
   ' <|tool_calls_section_begin|> <|tool_call_begin|> functions.read:0 <|tool_call_argument_begin|> {"file_path":"./package.json"} <|tool_call_end|> <|tool_calls_section_end|>';
 const KIMI_MULTI_TOOL_TEXT =
   ' <|tool_calls_section_begin|> <|tool_call_begin|> functions.read:0 <|tool_call_argument_begin|> {"file_path":"./package.json"} <|tool_call_end|> <|tool_call_begin|> functions.write:1 <|tool_call_argument_begin|> {"file_path":"./out.txt","content":"done"} <|tool_call_end|> <|tool_calls_section_end|>';
+const KIMI_BROWSER_TOOL_TEXT =
+  '我来用浏览器打开这篇文章看看。<|tool_calls_section_begin|><|tool_call_begin|>functions.browser:0<|tool_call_argument_begin|>{"action":"browse","url":"https://zhuanlan.zhihu.com/p/2022015752258027715"}<|tool_call_end|><|tool_calls_section_end|>';
 
 describe("kimi tool-call markup wrapper", () => {
   it("converts tagged Kimi tool-call text into structured tool calls", async () => {
@@ -203,6 +205,43 @@ describe("kimi tool-call markup wrapper", () => {
           id: "functions.write:1",
           name: "functions.write",
           arguments: { file_path: "./out.txt", content: "done" },
+        },
+      ],
+      stopReason: "toolUse",
+    });
+  });
+
+  it("extracts tagged tool calls from assistant narration text", async () => {
+    const finalMessage = {
+      role: "assistant",
+      content: [{ type: "text", text: KIMI_BROWSER_TOOL_TEXT }],
+      stopReason: "stop",
+    };
+    const baseStreamFn: StreamFn = () =>
+      createFakeStream({
+        events: [],
+        resultMessage: finalMessage,
+      }) as ReturnType<StreamFn>;
+
+    const wrapped = createKimiToolCallMarkupWrapper(baseStreamFn);
+    const stream = wrapped(
+      { api: "anthropic-messages", provider: "kimi", id: "k2p5" } as Model<"anthropic-messages">,
+      { messages: [] } as Context,
+      {},
+    ) as FakeStream;
+
+    await expect(stream.result()).resolves.toEqual({
+      role: "assistant",
+      content: [
+        { type: "text", text: "我来用浏览器打开这篇文章看看。" },
+        {
+          type: "toolCall",
+          id: "functions.browser:0",
+          name: "functions.browser",
+          arguments: {
+            action: "browse",
+            url: "https://zhuanlan.zhihu.com/p/2022015752258027715",
+          },
         },
       ],
       stopReason: "toolUse",
