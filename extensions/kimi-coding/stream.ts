@@ -93,6 +93,11 @@ type KimiRewrittenTextBlock =
       text: string;
     };
 
+type BalancedJsonSlice = {
+  json: string;
+  endIndex: number;
+};
+
 function pushTextBlock(blocks: KimiRewrittenTextBlock[], text: string): void {
   if (!text.trim()) {
     return;
@@ -144,6 +149,115 @@ function parseKimiTaggedContentBlocks(text: string): KimiRewrittenTextBlock[] | 
   return foundSection ? blocks : null;
 }
 
+function extractBalancedJsonSlice(text: string, startIndex: number): BalancedJsonSlice | null {
+  let cursor = startIndex;
+  while (cursor < text.length && /\s/.test(text[cursor] ?? "")) {
+    cursor += 1;
+  }
+  if ((text[cursor] ?? "") !== "{") {
+    return null;
+  }
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = cursor; index < text.length; index += 1) {
+    const char = text[index];
+    if (char === undefined) {
+      break;
+    }
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+    if (char === "{") {
+      depth += 1;
+      continue;
+    }
+    if (char === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return {
+          json: text.slice(cursor, index + 1),
+          endIndex: index + 1,
+        };
+      }
+    }
+  }
+
+  return null;
+}
+
+const INLINE_TOOL_CALL_RE = /((?:functions?|tools?)(?:[./_-][a-zA-Z0-9_-]+)+:\d+)\s+/g;
+
+function parseKimiInlineToolCalls(text: string): KimiRewrittenTextBlock[] | null {
+  const blocks: KimiRewrittenTextBlock[] = [];
+  let cursor = 0;
+  let changed = false;
+
+  while (cursor < text.length) {
+    INLINE_TOOL_CALL_RE.lastIndex = cursor;
+    const match = INLINE_TOOL_CALL_RE.exec(text);
+    if (!match) {
+      pushTextBlock(blocks, text.slice(cursor));
+      break;
+    }
+
+    const rawId = match[1]?.trim();
+    if (!rawId) {
+      pushTextBlock(blocks, text.slice(cursor));
+      break;
+    }
+
+    const matchIndex = match.index;
+    const previousChar = matchIndex > 0 ? text[matchIndex - 1] : undefined;
+    if (previousChar && !/\s/.test(previousChar)) {
+      cursor = matchIndex + 1;
+      continue;
+    }
+
+    const parsedArguments = extractBalancedJsonSlice(text, INLINE_TOOL_CALL_RE.lastIndex);
+    if (!parsedArguments) {
+      cursor = matchIndex + 1;
+      continue;
+    }
+
+    let argumentsObject: unknown;
+    try {
+      argumentsObject = JSON.parse(parsedArguments.json);
+    } catch {
+      cursor = matchIndex + 1;
+      continue;
+    }
+    if (!argumentsObject || typeof argumentsObject !== "object" || Array.isArray(argumentsObject)) {
+      cursor = matchIndex + 1;
+      continue;
+    }
+
+    pushTextBlock(blocks, text.slice(cursor, matchIndex));
+    blocks.push({
+      type: "toolCall",
+      id: rawId,
+      name: stripTaggedToolCallCounter(rawId),
+      arguments: argumentsObject as Record<string, unknown>,
+    });
+    changed = true;
+    cursor = parsedArguments.endIndex;
+  }
+
+  return changed ? blocks : null;
+}
+
 function rewriteKimiTaggedToolCallsInMessage(message: unknown): void {
   if (!message || typeof message !== "object") {
     return;
@@ -167,8 +281,26 @@ function rewriteKimiTaggedToolCallsInMessage(message: unknown): void {
       continue;
     }
 
-    const parsed = parseKimiTaggedContentBlocks(typedBlock.text);
-    if (!parsed) {
+    const taggedBlocks = parseKimiTaggedContentBlocks(typedBlock.text);
+    const candidateBlocks = taggedBlocks ?? [{ type: "text", text: typedBlock.text }];
+    const parsed: KimiRewrittenTextBlock[] = [];
+    let blockChanged = taggedBlocks !== null;
+
+    for (const candidate of candidateBlocks) {
+      if (candidate.type !== "text") {
+        parsed.push(candidate);
+        continue;
+      }
+      const inlineBlocks = parseKimiInlineToolCalls(candidate.text);
+      if (!inlineBlocks) {
+        parsed.push(candidate);
+        continue;
+      }
+      parsed.push(...inlineBlocks);
+      blockChanged = true;
+    }
+
+    if (!blockChanged) {
       nextContent.push(block);
       continue;
     }

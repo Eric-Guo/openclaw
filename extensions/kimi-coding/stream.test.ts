@@ -29,6 +29,17 @@ const KIMI_MULTI_TOOL_TEXT =
   ' <|tool_calls_section_begin|> <|tool_call_begin|> functions.read:0 <|tool_call_argument_begin|> {"file_path":"./package.json"} <|tool_call_end|> <|tool_call_begin|> functions.write:1 <|tool_call_argument_begin|> {"file_path":"./out.txt","content":"done"} <|tool_call_end|> <|tool_calls_section_end|>';
 const KIMI_BROWSER_TOOL_TEXT =
   '我来用浏览器打开这篇文章看看。<|tool_calls_section_begin|><|tool_call_begin|>functions.browser:0<|tool_call_argument_begin|>{"action":"browse","url":"https://zhuanlan.zhihu.com/p/2022015752258027715"}<|tool_call_end|><|tool_calls_section_end|>';
+const KIMI_MEMORY_READ_TEXT =
+  '<|tool_calls_section_begin|><|tool_call_begin|>functions.read:0<|tool_call_argument_begin|>{"file_path":"/Users/guoshuyi/.openclaw/workspace/SOUL.md"}<|tool_call_end|><|tool_call_begin|>functions.read:1<|tool_call_argument_begin|>{"file_path":"/Users/guoshuyi/.openclaw/workspace/USER.md"}<|tool_call_end|><|tool_call_begin|>functions.read:2<|tool_call_argument_begin|>{"file_path":"/Users/guoshuyi/.openclaw/workspace/MEMORY.md"}<|tool_call_end|><|tool_call_begin|>functions.read:3<|tool_call_argument_begin|>{"file_path":"/Users/guoshuyi/.openclaw/workspace/memory/2026-04-08.md"}<|tool_call_end|><|tool_call_begin|>functions.read:4<|tool_call_argument_begin|>{"file_path":"/Users/guoshuyi/.openclaw/workspace/memory/2026-04-07.md"}<|tool_call_end|><|tool_calls_section_end|>\n晚上好，过纯中。🏠 刚读完今天的记忆文件，我已经准备好了。有什么想做的吗？';
+const KIMI_MIXED_TOOL_TEXT = [
+  "<|tool_calls_section_begin|>",
+  '<|tool_call_begin|>functions.read:0<|tool_call_argument_begin|>{"file_path":"/Users/guoshuyi/.openclaw/workspace/SOUL.md"}<|tool_call_end|>',
+  '<|tool_call_begin|>functions.read:1<|tool_call_argument_begin|>{"file_path":"/Users/guoshuyi/.openclaw/workspace/USER.md"}<|tool_call_end|>',
+  "<|tool_calls_section_end|>\n",
+  'functions.exec:5 {"command":"cat /Users/guoshuyi/.openclaw/workspace/SOUL.md"}  ',
+  'functions.exec:6 {"command":"cat /Users/guoshuyi/.openclaw/workspace/memory/2026-04-08.md 2>/dev/null || echo \\"File not found\\""}\n',
+  "晚上好！🏠 我是过家家，刚完成今天的记忆同步。有什么想聊的，或者需要我帮忙做什么？",
+].join("");
 
 describe("kimi tool-call markup wrapper", () => {
   it("converts tagged Kimi tool-call text into structured tool calls", async () => {
@@ -242,6 +253,125 @@ describe("kimi tool-call markup wrapper", () => {
             action: "browse",
             url: "https://zhuanlan.zhihu.com/p/2022015752258027715",
           },
+        },
+      ],
+      stopReason: "toolUse",
+    });
+  });
+
+  it("keeps trailing assistant narration after tagged tool calls", async () => {
+    const finalMessage = {
+      role: "assistant",
+      content: [{ type: "text", text: KIMI_MEMORY_READ_TEXT }],
+      stopReason: "stop",
+    };
+    const baseStreamFn: StreamFn = () =>
+      createFakeStream({
+        events: [],
+        resultMessage: finalMessage,
+      }) as ReturnType<StreamFn>;
+
+    const wrapped = createKimiToolCallMarkupWrapper(baseStreamFn);
+    const stream = wrapped(
+      { api: "anthropic-messages", provider: "kimi", id: "k2p5" } as Model<"anthropic-messages">,
+      { messages: [] } as Context,
+      {},
+    ) as FakeStream;
+
+    await expect(stream.result()).resolves.toEqual({
+      role: "assistant",
+      content: [
+        {
+          type: "toolCall",
+          id: "functions.read:0",
+          name: "functions.read",
+          arguments: { file_path: "/Users/guoshuyi/.openclaw/workspace/SOUL.md" },
+        },
+        {
+          type: "toolCall",
+          id: "functions.read:1",
+          name: "functions.read",
+          arguments: { file_path: "/Users/guoshuyi/.openclaw/workspace/USER.md" },
+        },
+        {
+          type: "toolCall",
+          id: "functions.read:2",
+          name: "functions.read",
+          arguments: { file_path: "/Users/guoshuyi/.openclaw/workspace/MEMORY.md" },
+        },
+        {
+          type: "toolCall",
+          id: "functions.read:3",
+          name: "functions.read",
+          arguments: { file_path: "/Users/guoshuyi/.openclaw/workspace/memory/2026-04-08.md" },
+        },
+        {
+          type: "toolCall",
+          id: "functions.read:4",
+          name: "functions.read",
+          arguments: { file_path: "/Users/guoshuyi/.openclaw/workspace/memory/2026-04-07.md" },
+        },
+        {
+          type: "text",
+          text: "\n晚上好，过纯中。🏠 刚读完今天的记忆文件，我已经准备好了。有什么想做的吗？",
+        },
+      ],
+      stopReason: "toolUse",
+    });
+  });
+
+  it("extracts inline tool-call text that follows a tagged tool-call section", async () => {
+    const finalMessage = {
+      role: "assistant",
+      content: [{ type: "text", text: KIMI_MIXED_TOOL_TEXT }],
+      stopReason: "stop",
+    };
+    const baseStreamFn: StreamFn = () =>
+      createFakeStream({
+        events: [],
+        resultMessage: finalMessage,
+      }) as ReturnType<StreamFn>;
+
+    const wrapped = createKimiToolCallMarkupWrapper(baseStreamFn);
+    const stream = wrapped(
+      { api: "anthropic-messages", provider: "kimi", id: "k2p5" } as Model<"anthropic-messages">,
+      { messages: [] } as Context,
+      {},
+    ) as FakeStream;
+
+    await expect(stream.result()).resolves.toEqual({
+      role: "assistant",
+      content: [
+        {
+          type: "toolCall",
+          id: "functions.read:0",
+          name: "functions.read",
+          arguments: { file_path: "/Users/guoshuyi/.openclaw/workspace/SOUL.md" },
+        },
+        {
+          type: "toolCall",
+          id: "functions.read:1",
+          name: "functions.read",
+          arguments: { file_path: "/Users/guoshuyi/.openclaw/workspace/USER.md" },
+        },
+        {
+          type: "toolCall",
+          id: "functions.exec:5",
+          name: "functions.exec",
+          arguments: { command: "cat /Users/guoshuyi/.openclaw/workspace/SOUL.md" },
+        },
+        {
+          type: "toolCall",
+          id: "functions.exec:6",
+          name: "functions.exec",
+          arguments: {
+            command:
+              'cat /Users/guoshuyi/.openclaw/workspace/memory/2026-04-08.md 2>/dev/null || echo "File not found"',
+          },
+        },
+        {
+          type: "text",
+          text: "\n晚上好！🏠 我是过家家，刚完成今天的记忆同步。有什么想聊的，或者需要我帮忙做什么？",
         },
       ],
       stopReason: "toolUse",
