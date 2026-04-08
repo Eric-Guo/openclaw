@@ -7,6 +7,7 @@ const TOOL_CALLS_SECTION_END = "<|tool_calls_section_end|>";
 const TOOL_CALL_BEGIN = "<|tool_call_begin|>";
 const TOOL_CALL_ARGUMENT_BEGIN = "<|tool_call_argument_begin|>";
 const TOOL_CALL_END = "<|tool_call_end|>";
+const INLINE_TOOL_CALL_ID_PREFIX = "call_kimi_inline_";
 
 type KimiToolCallBlock = {
   type: "toolCall";
@@ -162,6 +163,11 @@ type BalancedJsonSlice = {
   endIndex: number;
 };
 
+type ParenthesizedJsonSlice = {
+  json: string;
+  endIndex: number;
+};
+
 function pushTextBlock(blocks: KimiRewrittenTextBlock[], text: string): void {
   if (!text.trim()) {
     return;
@@ -265,7 +271,40 @@ function extractBalancedJsonSlice(text: string, startIndex: number): BalancedJso
   return null;
 }
 
+function extractParenthesizedJsonSlice(
+  text: string,
+  openingParenIndex: number,
+): ParenthesizedJsonSlice | null {
+  if ((text[openingParenIndex] ?? "") !== "(") {
+    return null;
+  }
+
+  const jsonSlice = extractBalancedJsonSlice(text, openingParenIndex + 1);
+  if (!jsonSlice) {
+    return null;
+  }
+
+  let cursor = jsonSlice.endIndex;
+  while (cursor < text.length && /\s/.test(text[cursor] ?? "")) {
+    cursor += 1;
+  }
+  if ((text[cursor] ?? "") !== ")") {
+    return null;
+  }
+
+  return {
+    json: jsonSlice.json,
+    endIndex: cursor + 1,
+  };
+}
+
+function hasStandaloneToolCallBoundary(previousChar: string | undefined): boolean {
+  return !previousChar || !/[\p{L}\p{N}._/-]/u.test(previousChar);
+}
+
 const INLINE_TOOL_CALL_RE = /((?:functions?|tools?)(?:[./_-][a-zA-Z0-9_-]+)+:\d+)\s+/g;
+const PAREN_TOOL_CALL_RE =
+  /((?:(?:functions?|tools?)[./_-])?[a-zA-Z][a-zA-Z0-9_.-]*(?::\d+)?)\s*\(/g;
 
 function parseKimiInlineToolCalls(
   text: string,
@@ -291,7 +330,7 @@ function parseKimiInlineToolCalls(
 
     const matchIndex = match.index;
     const previousChar = matchIndex > 0 ? text[matchIndex - 1] : undefined;
-    if (previousChar && !/\s/.test(previousChar)) {
+    if (!hasStandaloneToolCallBoundary(previousChar)) {
       cursor = matchIndex + 1;
       continue;
     }
@@ -323,6 +362,134 @@ function parseKimiInlineToolCalls(
     });
     changed = true;
     cursor = parsedArguments.endIndex;
+  }
+
+  return changed ? blocks : null;
+}
+
+function isLikelyAllowedParenToolCallName(
+  rawId: string,
+  resolvedName: string,
+  allowedToolNames?: Set<string>,
+): boolean {
+  if (!allowedToolNames || allowedToolNames.size === 0) {
+    return true;
+  }
+  if (allowedToolNames.has(resolvedName)) {
+    return true;
+  }
+  return /^(?:functions?|tools?)[./_-]/i.test(rawId);
+}
+
+function createSyntheticInlineToolCallId(counter: number): string {
+  return `${INLINE_TOOL_CALL_ID_PREFIX}${counter}`;
+}
+
+function parseKimiParenthesizedToolCalls(
+  text: string,
+  allowedToolNames?: Set<string>,
+): KimiRewrittenTextBlock[] | null {
+  const blocks: KimiRewrittenTextBlock[] = [];
+  let cursor = 0;
+  let changed = false;
+  let syntheticIdCounter = 0;
+
+  while (cursor < text.length) {
+    PAREN_TOOL_CALL_RE.lastIndex = cursor;
+    const match = PAREN_TOOL_CALL_RE.exec(text);
+    if (!match) {
+      pushTextBlock(blocks, text.slice(cursor));
+      break;
+    }
+
+    const rawId = match[1]?.trim();
+    if (!rawId) {
+      pushTextBlock(blocks, text.slice(cursor));
+      break;
+    }
+
+    const matchIndex = match.index;
+    const previousChar = matchIndex > 0 ? text[matchIndex - 1] : undefined;
+    if (!hasStandaloneToolCallBoundary(previousChar)) {
+      cursor = matchIndex + 1;
+      continue;
+    }
+
+    const resolvedName = resolveTaggedToolCallName(
+      stripTaggedToolCallCounter(rawId),
+      allowedToolNames,
+    );
+    if (!isLikelyAllowedParenToolCallName(rawId, resolvedName, allowedToolNames)) {
+      cursor = matchIndex + 1;
+      continue;
+    }
+
+    const openingParenIndex = PAREN_TOOL_CALL_RE.lastIndex - 1;
+    const parsedArguments = extractParenthesizedJsonSlice(text, openingParenIndex);
+    if (!parsedArguments) {
+      cursor = matchIndex + 1;
+      continue;
+    }
+
+    let argumentsObject: unknown;
+    try {
+      argumentsObject = JSON.parse(parsedArguments.json);
+    } catch {
+      cursor = matchIndex + 1;
+      continue;
+    }
+    if (!argumentsObject || typeof argumentsObject !== "object" || Array.isArray(argumentsObject)) {
+      cursor = matchIndex + 1;
+      continue;
+    }
+
+    pushTextBlock(blocks, text.slice(cursor, matchIndex));
+    blocks.push({
+      type: "toolCall",
+      id:
+        /:\d+$/.test(rawId) || rawId.startsWith(INLINE_TOOL_CALL_ID_PREFIX)
+          ? rawId
+          : createSyntheticInlineToolCallId(++syntheticIdCounter),
+      name: resolvedName,
+      arguments: argumentsObject as Record<string, unknown>,
+    });
+    changed = true;
+    cursor = parsedArguments.endIndex;
+  }
+
+  return changed ? blocks : null;
+}
+
+function rewriteKimiInlineToolText(
+  text: string,
+  allowedToolNames?: Set<string>,
+): KimiRewrittenTextBlock[] | null {
+  const parsers = [parseKimiInlineToolCalls, parseKimiParenthesizedToolCalls] as const;
+  let blocks: KimiRewrittenTextBlock[] = [{ type: "text", text }];
+  let changed = false;
+
+  for (const parser of parsers) {
+    const nextBlocks: KimiRewrittenTextBlock[] = [];
+    let parserChanged = false;
+
+    for (const block of blocks) {
+      if (block.type !== "text") {
+        nextBlocks.push(block);
+        continue;
+      }
+
+      const parsedBlocks = parser(block.text, allowedToolNames);
+      if (!parsedBlocks) {
+        nextBlocks.push(block);
+        continue;
+      }
+
+      nextBlocks.push(...parsedBlocks);
+      parserChanged = true;
+    }
+
+    blocks = nextBlocks;
+    changed ||= parserChanged;
   }
 
   return changed ? blocks : null;
@@ -364,7 +531,7 @@ function rewriteKimiTaggedToolCallsInMessage(
         parsed.push(candidate);
         continue;
       }
-      const inlineBlocks = parseKimiInlineToolCalls(candidate.text, allowedToolNames);
+      const inlineBlocks = rewriteKimiInlineToolText(candidate.text, allowedToolNames);
       if (!inlineBlocks) {
         parsed.push(candidate);
         continue;

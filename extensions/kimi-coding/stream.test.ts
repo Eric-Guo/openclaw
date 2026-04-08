@@ -69,6 +69,14 @@ const KIMI_MIXED_TOOL_TEXT = [
   'functions.exec:6 {"command":"cat /Users/guoshuyi/.openclaw/workspace/memory/2026-04-08.md 2>/dev/null || echo \\"File not found\\""}\n',
   "晚上好！🏠 我是过家家，刚完成今天的记忆同步。有什么想聊的，或者需要我帮忙做什么？",
 ].join("");
+const KIMI_STARTUP_READ_TEXT = [
+  "我来执行启动序列，读取必要的文件。",
+  'read({"file_path":"/Users/guoshuyi/.openclaw/workspace/SOUL.md"}) ',
+  'read({"file_path":"/Users/guoshuyi/.openclaw/workspace/USER.md"}) ',
+  'read({"file_path":"/Users/guoshuyi/.openclaw/workspace/memory/2026-04-08.md"}) ',
+  'read({"file_path":"/Users/guoshuyi/.openclaw/workspace/memory/2026-04-07.md"}) ',
+  'read({"file_path":"/Users/guoshuyi/.openclaw/workspace/MEMORY.md"})',
+].join("");
 
 describe("kimi tool-call markup wrapper", () => {
   it("converts tagged Kimi tool-call text into structured tool calls", async () => {
@@ -401,6 +409,67 @@ describe("kimi tool-call markup wrapper", () => {
         {
           type: "text",
           text: "\n晚上好！🏠 我是过家家，刚完成今天的记忆同步。有什么想聊的，或者需要我帮忙做什么？",
+        },
+      ],
+      stopReason: "toolUse",
+    });
+  });
+
+  it("extracts parenthesized tool calls without echoing raw read text", async () => {
+    const finalMessage = {
+      role: "assistant",
+      content: [{ type: "text", text: KIMI_STARTUP_READ_TEXT }],
+      stopReason: "stop",
+    };
+    const baseStreamFn: StreamFn = () =>
+      createFakeStream({
+        events: [],
+        resultMessage: finalMessage,
+      }) as ReturnType<StreamFn>;
+
+    const wrapped = createKimiToolCallMarkupWrapper(baseStreamFn);
+    const stream = wrapped(
+      { api: "anthropic-messages", provider: "kimi", id: "k2p5" } as Model<"anthropic-messages">,
+      { messages: [], tools: TEST_TOOLS } as Context,
+      {},
+    ) as FakeStream;
+
+    await expect(stream.result()).resolves.toEqual({
+      role: "assistant",
+      content: [
+        {
+          type: "text",
+          text: "我来执行启动序列，读取必要的文件。",
+        },
+        {
+          type: "toolCall",
+          id: "call_kimi_inline_1",
+          name: "read",
+          arguments: { file_path: "/Users/guoshuyi/.openclaw/workspace/SOUL.md" },
+        },
+        {
+          type: "toolCall",
+          id: "call_kimi_inline_2",
+          name: "read",
+          arguments: { file_path: "/Users/guoshuyi/.openclaw/workspace/USER.md" },
+        },
+        {
+          type: "toolCall",
+          id: "call_kimi_inline_3",
+          name: "read",
+          arguments: { file_path: "/Users/guoshuyi/.openclaw/workspace/memory/2026-04-08.md" },
+        },
+        {
+          type: "toolCall",
+          id: "call_kimi_inline_4",
+          name: "read",
+          arguments: { file_path: "/Users/guoshuyi/.openclaw/workspace/memory/2026-04-07.md" },
+        },
+        {
+          type: "toolCall",
+          id: "call_kimi_inline_5",
+          name: "read",
+          arguments: { file_path: "/Users/guoshuyi/.openclaw/workspace/MEMORY.md" },
         },
       ],
       stopReason: "toolUse",
