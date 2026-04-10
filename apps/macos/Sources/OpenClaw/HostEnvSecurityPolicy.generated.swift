@@ -297,7 +297,6 @@ enum HostEnvSecurityPolicy {
     ]
 
     static let blockedOverrideKeys: Set<String> = [
-        "ALL_PROXY",
         "AMQP_URL",
         "ANSIBLE_CALLBACK_PLUGINS",
         "ANSIBLE_COLLECTIONS_PATH",
@@ -380,8 +379,6 @@ enum HostEnvSecurityPolicy {
         "HGRCPATH",
         "HISTFILE",
         "HOME",
-        "HTTP_PROXY",
-        "HTTPS_PROXY",
         "KUBECONFIG",
         "LDFLAGS",
         "LESSCLOSE",
