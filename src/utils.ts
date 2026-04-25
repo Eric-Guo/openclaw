@@ -214,5 +214,19 @@ export function displayString(input: string): string {
   return shortenHomeInString(input);
 }
 
+function resolveConfigDirSafe(): string {
+  try {
+    return resolveConfigDir();
+  } catch (err) {
+    // In non-Node environments (e.g. browser bundles), filesystem utilities are
+    // unavailable. Return a safe fallback so pure utility imports don't crash
+    // at module load time. Node callers will still get the real path.
+    if (typeof process !== "undefined" && typeof process.versions?.node === "string") {
+      throw err;
+    }
+    return "/";
+  }
+}
+
 // Configuration root; can be overridden via OPENCLAW_STATE_DIR.
-export const CONFIG_DIR = resolveConfigDir();
+export const CONFIG_DIR = resolveConfigDirSafe();
