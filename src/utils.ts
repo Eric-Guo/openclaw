@@ -116,9 +116,13 @@ export function truncateUtf16Safe(input: string, maxLen: number): string {
   return sliceUtf16Safe(input, 0, limit);
 }
 
+function safeProcessEnv(): NodeJS.ProcessEnv {
+  return typeof process !== "undefined" ? process.env : {};
+}
+
 export function resolveUserPath(
   input: string,
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv = safeProcessEnv(),
   homedir: () => string = os.homedir,
 ): string {
   if (!input) {
@@ -128,7 +132,7 @@ export function resolveUserPath(
 }
 
 export function resolveConfigDir(
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv = safeProcessEnv(),
   homedir: () => string = os.homedir,
 ): string {
   const override = env.OPENCLAW_STATE_DIR?.trim();
@@ -152,7 +156,7 @@ export function resolveConfigDir(
 }
 
 export function resolveHomeDir(): string | undefined {
-  return resolveEffectiveHomeDir(process.env, os.homedir);
+  return resolveEffectiveHomeDir(safeProcessEnv(), os.homedir);
 }
 
 function resolveHomeDisplayPrefix(): { home: string; prefix: string } | undefined {
@@ -160,7 +164,7 @@ function resolveHomeDisplayPrefix(): { home: string; prefix: string } | undefine
   if (!home) {
     return undefined;
   }
-  const explicitHome = process.env.OPENCLAW_HOME?.trim();
+  const explicitHome = safeProcessEnv().OPENCLAW_HOME?.trim();
   if (explicitHome) {
     return { home, prefix: "$OPENCLAW_HOME" };
   }
